@@ -1,4 +1,6 @@
-# ZipUtility Plugin
+# A modified version of the ZipUtility Plugin
+
+**Note that this version of the plugin has been modified to be Synchronous.**
 
 [![GitHub release](https://img.shields.io/github/release/getnamo/ziputility-ue4.svg)](https://github.com/getnamo/ziputility-ue4/releases)
 [![Github All Releases](https://img.shields.io/github/downloads/getnamo/ziputility-ue4/total.svg)](https://github.com/getnamo/ziputility-ue4/releases)
