@@ -7,7 +7,6 @@ Desktop.ini
 
 # Recycle Bin used on file shares
 $RECYCLE.BIN/
-Binaries/*
 
 # Windows Installer files
 *.cab
@@ -48,4 +47,6 @@ Network Trash Folder
 Temporary Items
 .apdisk
 Intermediate
-Binaries/Win64/UE4Editor-ZipUtility.dll
+Binaries/Win64/UE4Editor-Win64-DebugGame.modules
+Binaries/Win64/UE4Editor-WindowsFileUtility-Win64-DebugGame.dll
+Binaries/Win64/UE4Editor-ZipUtility-Win64-DebugGame.dll
