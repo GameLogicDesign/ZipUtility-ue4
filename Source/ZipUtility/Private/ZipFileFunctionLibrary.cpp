@@ -5,7 +5,6 @@
 #include "ListCallback.h"
 #include "ProgressCallback.h"
 #include "IPluginManager.h"
-#include "WFULambdaRunnable.h"
 #include "ZULambdaDelegate.h"
 
 #include "7zpp.h"
@@ -14,23 +13,6 @@ using namespace SevenZip;
 
 //Private Namespace
 namespace{
-
-	//Threaded Lambda convenience wrappers - Task graph is only suitable for short duration lambdas, but doesn't incur thread overhead
-	FGraphEventRef RunLambdaOnGameThread(TFunction< void()> InFunction)
-	{
-		return FFunctionGraphTask::CreateAndDispatchWhenReady(InFunction, TStatId(), nullptr, ENamedThreads::GameThread);
-	}
-
-	FGraphEventRef RunLambdaOnAnyThread(TFunction< void()> InFunction)
-	{
-		return FFunctionGraphTask::CreateAndDispatchWhenReady(InFunction, TStatId(), nullptr, ENamedThreads::AnyThread);
-	}
-
-	//Uses proper threading, for any task that may run longer than about 2 seconds.
-	void RunLongLambdaOnAnyThread(TFunction< void()> InFunction)
-	{
-		WFULambdaRunnable::RunLambdaOnBackGroundThread(InFunction);
-	}
 
 	class SevenZipCallbackHandler : public ListCallback, public ProgressCallback
 	{
@@ -46,11 +28,7 @@ namespace{
 
 			if (bytes > 0) {
 				const float ProgressPercentage = ((double)((TotalBytes) - (BytesLeft-bytes)) / (double)TotalBytes) * 100;
-
-				RunLambdaOnGameThread([interfaceDelegate, pathConst, ProgressPercentage, bytesConst] {
-					//UE_LOG(LogClass, Log, TEXT("Progress: %d bytes"), progress);
-					((IZipUtilityInterface*)interfaceDelegate)->Execute_OnProgress((UObject*)interfaceDelegate, pathConst, ProgressPercentage, bytesConst);
-				});
+				((IZipUtilityInterface*)interfaceDelegate)->Execute_OnProgress((UObject*)interfaceDelegate, pathConst, ProgressPercentage, bytesConst);
 			}
 		}
 
@@ -59,11 +37,7 @@ namespace{
 		{
 			const UObject* interfaceDelegate = progressDelegate;
 			const FString pathConst = FString(archivePath.c_str());
-
-			RunLambdaOnGameThread([pathConst, interfaceDelegate] {
-				//UE_LOG(LogClass, Log, TEXT("All Done!"));
-				((IZipUtilityInterface*)interfaceDelegate)->Execute_OnDone((UObject*)interfaceDelegate, pathConst, EZipUtilityCompletionState::SUCCESS);
-			});
+			((IZipUtilityInterface*)interfaceDelegate)->Execute_OnDone((UObject*)interfaceDelegate, pathConst, EZipUtilityCompletionState::SUCCESS);
 		}
 
 		virtual void OnFileDone(const TString& archivePath, const TString& filePath, uint64 bytes) override
@@ -73,20 +47,13 @@ namespace{
 			const FString filePathConst = FString(filePath.c_str());
 			const uint64 bytesConst = bytes;
 
-			RunLambdaOnGameThread([interfaceDelegate, pathConst, filePathConst, bytesConst] {
-				//UE_LOG(LogClass, Log, TEXT("File Done: %s, %d bytes"), filePathConst.c_str(), bytesConst);
-				((IZipUtilityInterface*)interfaceDelegate)->Execute_OnFileDone((UObject*)interfaceDelegate, pathConst, filePathConst);
-			});
+			((IZipUtilityInterface*)interfaceDelegate)->Execute_OnFileDone((UObject*)interfaceDelegate, pathConst, filePathConst);
 
 			//Handle byte decrementing
 			if (bytes > 0) {
 				BytesLeft -= bytes;
 				const float ProgressPercentage = ((double)(TotalBytes-BytesLeft) / (double)TotalBytes) * 100;
-
-				RunLambdaOnGameThread([interfaceDelegate, pathConst, ProgressPercentage, bytes] {
-					//UE_LOG(LogClass, Log, TEXT("Progress: %d bytes"), progress);
-					((IZipUtilityInterface*)interfaceDelegate)->Execute_OnProgress((UObject*)interfaceDelegate, pathConst, ProgressPercentage, bytes);
-				});
+				((IZipUtilityInterface*)interfaceDelegate)->Execute_OnProgress((UObject*)interfaceDelegate, pathConst, ProgressPercentage, bytes);
 			}
 
 		}
@@ -99,11 +66,7 @@ namespace{
 			const UObject* interfaceDelegate = progressDelegate;
 			const uint64 bytesConst = TotalBytes;
 			const FString pathConst = FString(archivePath.c_str());
-
-			RunLambdaOnGameThread([interfaceDelegate, pathConst, bytesConst] {
-				//UE_LOG(LogClass, Log, TEXT("Starting with %d bytes"), bytesConst);
-				((IZipUtilityInterface*)interfaceDelegate)->Execute_OnStartProcess((UObject*)interfaceDelegate, pathConst, bytesConst);
-			});
+			((IZipUtilityInterface*)interfaceDelegate)->Execute_OnStartProcess((UObject*)interfaceDelegate, pathConst, bytesConst);
 		}
 
 		virtual void OnFileFound(const TString& archivePath, const TString& filePath, int size)
@@ -112,28 +75,20 @@ namespace{
 			const uint64 bytesConst = TotalBytes;
 			const FString pathString = FString(archivePath.c_str());
 			const FString fileString = FString(filePath.c_str());
-
-			RunLambdaOnGameThread([interfaceDelegate, pathString, fileString, bytesConst] {		
-				((IZipUtilityInterface*)interfaceDelegate)->Execute_OnFileFound((UObject*)interfaceDelegate, pathString, fileString, bytesConst);
-			});
-
-			
+			((IZipUtilityInterface*)interfaceDelegate)->Execute_OnFileFound((UObject*)interfaceDelegate, pathString, fileString, bytesConst);
 		}
 
 		virtual void OnListingDone(const TString& archivePath)
 		{
 			const UObject* interfaceDelegate = progressDelegate;
 			const FString pathString = FString(archivePath.c_str());
-
-			RunLambdaOnGameThread([interfaceDelegate, pathString] {
-				((IZipUtilityInterface*)interfaceDelegate)->Execute_OnDone((UObject*)interfaceDelegate, pathString, EZipUtilityCompletionState::SUCCESS);
-			});
+			((IZipUtilityInterface*)interfaceDelegate)->Execute_OnDone((UObject*)interfaceDelegate, pathString, EZipUtilityCompletionState::SUCCESS);
 		}
 		
 		uint64 BytesLeft = 0;
 		uint64 TotalBytes = 0;
 		UObject* progressDelegate;
-};
+	};
 
 	//Private static vars
 	SevenZipLibrary SZLib;
@@ -260,129 +215,107 @@ namespace{
 	using namespace std;
 
 	
-
-		//Background Thread convenience functions
-	void UnzipFilesOnBGThreadWithFormat(const TArray<int32> fileIndices, const FString& archivePath, const FString& destinationDirectory, const UObject* progressDelegate, ZipUtilityCompressionFormat format)
+	void UnzipFilesSynchronousWithFormat(const TArray<int32> fileIndices, const FString& archivePath, const FString& destinationDirectory, const UObject* progressDelegate, ZipUtilityCompressionFormat format)
 	{
-		RunLongLambdaOnAnyThread([progressDelegate, fileIndices, archivePath, destinationDirectory, format] {
-			SevenZipCallbackHandler PrivateCallback;
-			PrivateCallback.progressDelegate = (UObject*)progressDelegate;
-			//UE_LOG(LogClass, Log, TEXT("path is: %s"), *path);
-			SevenZipExtractor extractor(SZLib, *archivePath);
+		SevenZipCallbackHandler PrivateCallback;
+		PrivateCallback.progressDelegate = (UObject*)progressDelegate;
+		//UE_LOG(LogClass, Log, TEXT("path is: %s"), *path);
+		SevenZipExtractor extractor(SZLib, *archivePath);
 
-			if (format == COMPRESSION_FORMAT_UNKNOWN) {
-				if (!extractor.DetectCompressionFormat())
-				{
-					extractor.SetCompressionFormat(SevenZip::CompressionFormat::Zip);
-				}
-			}
-			else
+		if (format == COMPRESSION_FORMAT_UNKNOWN) {
+			if (!extractor.DetectCompressionFormat())
 			{
-				extractor.SetCompressionFormat(libZipFormatFromUEFormat(format));
+				extractor.SetCompressionFormat(SevenZip::CompressionFormat::Zip);
 			}
+		}
+		else
+		{
+			extractor.SetCompressionFormat(libZipFormatFromUEFormat(format));
+		}
 
-			// Extract indices
-			const int32 numberFiles = fileIndices.Num(); 
-			unsigned int* indices = new unsigned int[numberFiles]; 
+		// Extract indices
+		const int32 numberFiles = fileIndices.Num(); 
+		unsigned int* indices = new unsigned int[numberFiles]; 
 
-			for (int32 idx = 0; idx < numberFiles; idx++)
-			{
-				indices[idx] = fileIndices[idx]; 
-			}
+		for (int32 idx = 0; idx < numberFiles; idx++)
+		{
+			indices[idx] = fileIndices[idx]; 
+		}
 
-			extractor.ExtractFilesFromArchive(indices, numberFiles, *destinationDirectory, &PrivateCallback);
-
-		});
+		extractor.ExtractFilesFromArchive(indices, numberFiles, *destinationDirectory, &PrivateCallback);
 	}
 
-	//Background Thread convenience functions
-	void UnzipOnBGThreadWithFormat(const FString& archivePath, const FString& destinationDirectory, const UObject* progressDelegate, ZipUtilityCompressionFormat format)
+	void UnzipSynchronousWithFormat(const FString& archivePath, const FString& destinationDirectory, const UObject* progressDelegate, ZipUtilityCompressionFormat format)
 	{
-		RunLongLambdaOnAnyThread([progressDelegate, archivePath, destinationDirectory, format] {
-			SevenZipCallbackHandler PrivateCallback;
-			PrivateCallback.progressDelegate = (UObject*)progressDelegate;
-			//UE_LOG(LogClass, Log, TEXT("path is: %s"), *path);
-			SevenZipExtractor extractor(SZLib, *archivePath);
+		SevenZipCallbackHandler PrivateCallback;
+		PrivateCallback.progressDelegate = (UObject*)progressDelegate;
+		//UE_LOG(LogClass, Log, TEXT("path is: %s"), *path);
+		SevenZipExtractor extractor(SZLib, *archivePath);
 
-			if (format == COMPRESSION_FORMAT_UNKNOWN) {
-				if (!extractor.DetectCompressionFormat())
-				{
-					extractor.SetCompressionFormat(SevenZip::CompressionFormat::Zip);
-				}
-			}
-			else
+		if (format == COMPRESSION_FORMAT_UNKNOWN) {
+			if (!extractor.DetectCompressionFormat())
 			{
-				extractor.SetCompressionFormat(libZipFormatFromUEFormat(format));
+				extractor.SetCompressionFormat(SevenZip::CompressionFormat::Zip);
 			}
-
-			extractor.ExtractArchive(*destinationDirectory, &PrivateCallback);
-				
-		});
+		}
+		else
+		{
+			extractor.SetCompressionFormat(libZipFormatFromUEFormat(format));
+		}
+		extractor.ExtractArchive(*destinationDirectory, &PrivateCallback);
 	}
 
-	void ListOnBGThread(const FString& path, const FString& directory, const UObject* listDelegate, ZipUtilityCompressionFormat format)
+	void ListSynchronous(const FString& path, const FString& directory, const UObject* listDelegate, ZipUtilityCompressionFormat format)
 	{
-		//RunLongLambdaOnAnyThread - this shouldn't take long, but if it lags, swap the lambda methods
-		RunLambdaOnAnyThread([listDelegate, path, format, directory] {
-			SevenZipCallbackHandler PrivateCallback;
-			PrivateCallback.progressDelegate = (UObject*)listDelegate;
-			SevenZipLister lister(SZLib, *path);
+		SevenZipCallbackHandler PrivateCallback;
+		PrivateCallback.progressDelegate = (UObject*)listDelegate;
+		SevenZipLister lister(SZLib, *path);
 
-			if (format == COMPRESSION_FORMAT_UNKNOWN) {
-				if (!lister.DetectCompressionFormat())
-				{
-					lister.SetCompressionFormat(SevenZip::CompressionFormat::Zip);
-				}
-			}
-			else
+		if (format == COMPRESSION_FORMAT_UNKNOWN) {
+			if (!lister.DetectCompressionFormat())
 			{
-				lister.SetCompressionFormat(libZipFormatFromUEFormat(format));
+				lister.SetCompressionFormat(SevenZip::CompressionFormat::Zip);
 			}
-
-			lister.ListArchive(&PrivateCallback); //&PrivateCallback
-		});
+		}
+		else
+		{
+			lister.SetCompressionFormat(libZipFormatFromUEFormat(format));
+		}
+		lister.ListArchive(&PrivateCallback);
 	}
 
-	void ZipOnBGThread(const FString& path, const FString& fileName, const FString& directory, const UObject* progressDelegate, ZipUtilityCompressionFormat ueCompressionformat, ZipUtilityCompressionLevel ueCompressionlevel)
+	void ZipSynchronous(const FString& path, const FString& fileName, const FString& directory, const UObject* progressDelegate, ZipUtilityCompressionFormat ueCompressionformat, ZipUtilityCompressionLevel ueCompressionlevel)
 	{
-		RunLongLambdaOnAnyThread([progressDelegate, fileName, path, ueCompressionformat, ueCompressionlevel, directory] {
-			SevenZipCallbackHandler PrivateCallback;
-			PrivateCallback.progressDelegate = (UObject*)progressDelegate;
-			//Set the zip format
-			ZipUtilityCompressionFormat ueFormat = ueCompressionformat;
+		SevenZipCallbackHandler PrivateCallback;
+		PrivateCallback.progressDelegate = (UObject*)progressDelegate;
+		//Set the zip format
+		ZipUtilityCompressionFormat ueFormat = ueCompressionformat;
 
-			if (ueFormat == COMPRESSION_FORMAT_UNKNOWN) {
-				ueFormat = COMPRESSION_FORMAT_ZIP;
-			}
-			//Disallow creating .rar archives as per unrar restriction, this won't work anyway so redirect to 7z
-			else if (ueFormat == COMPRESSION_FORMAT_RAR) {
-				UE_LOG(LogClass, Warning, TEXT("ZipUtility: Rar compression not supported for creating archives, re-targeting as 7z."));
-				ueFormat = COMPRESSION_FORMAT_SEVEN_ZIP;
-			}
+		if (ueFormat == COMPRESSION_FORMAT_UNKNOWN) {
+			ueFormat = COMPRESSION_FORMAT_ZIP;
+		}
+		//Disallow creating .rar archives as per unrar restriction, this won't work anyway so redirect to 7z
+		else if (ueFormat == COMPRESSION_FORMAT_RAR) {
+			UE_LOG(LogClass, Warning, TEXT("ZipUtility: Rar compression not supported for creating archives, re-targeting as 7z."));
+			ueFormat = COMPRESSION_FORMAT_SEVEN_ZIP;
+		}
 			
-			//concatenate the output filename
-			FString outputFileName = FString::Printf(TEXT("%s/%s%s"), *directory, *fileName, *defaultExtensionFromUEFormat(ueFormat));
-			//UE_LOG(LogClass, Log, TEXT("\noutputfile is: <%s>\n path is: <%s>"), *outputFileName, *path);
+		//concatenate the output filename
+		FString outputFileName = FString::Printf(TEXT("%s/%s%s"), *directory, *fileName, *defaultExtensionFromUEFormat(ueFormat));
+		//UE_LOG(LogClass, Log, TEXT("\noutputfile is: <%s>\n path is: <%s>"), *outputFileName, *path);
 			
-			SevenZipCompressor compressor(SZLib, *ReversePathSlashes(outputFileName));
-			compressor.SetCompressionFormat(libZipFormatFromUEFormat(ueFormat));
-			compressor.SetCompressionLevel(libZipLevelFromUELevel(ueCompressionlevel));
+		SevenZipCompressor compressor(SZLib, *ReversePathSlashes(outputFileName));
+		compressor.SetCompressionFormat(libZipFormatFromUEFormat(ueFormat));
+		compressor.SetCompressionLevel(libZipLevelFromUELevel(ueCompressionlevel));
 
-			if (PathIsDirectory(*path))
-			{
-				//UE_LOG(LogClass, Log, TEXT("Compressing Folder"));
-				compressor.CompressDirectory(*ReversePathSlashes(path), &PrivateCallback);
-			}
-			else
-			{
-				//UE_LOG(LogClass, Log, TEXT("Compressing File"));
-				compressor.CompressFile(*ReversePathSlashes(path), &PrivateCallback);
-			}
-
-			//Todo: expand to support zipping up contents of current folder
-			//compressor.CompressFiles(*ReversePathSlashes(path), TEXT("*"),  &PrivateCallback);
-
-		});
+		if (PathIsDirectory(*path))
+		{
+			compressor.CompressDirectory(*ReversePathSlashes(path), &PrivateCallback);
+		}
+		else
+		{
+			compressor.CompressFile(*ReversePathSlashes(path), &PrivateCallback);
+		}
 	}
 
 }//End private namespace
@@ -423,7 +356,7 @@ bool UZipFileFunctionLibrary::UnzipFileNamedTo(const FString& archivePath, const
 
 bool UZipFileFunctionLibrary::UnzipFilesTo(const TArray<int32> fileIndices, const FString & archivePath, const FString & destinationPath, UObject * ZipUtilityInterfaceDelegate, TEnumAsByte<ZipUtilityCompressionFormat> format)
 {
-	UnzipFilesOnBGThreadWithFormat(fileIndices, archivePath, destinationPath, ZipUtilityInterfaceDelegate, format);
+	UnzipFilesSynchronousWithFormat(fileIndices, archivePath, destinationPath, ZipUtilityInterfaceDelegate, format);
 	return true;
 }
 
@@ -470,7 +403,7 @@ bool UZipFileFunctionLibrary::UnzipWithLambda(const FString& ArchivePath, TFunct
 
 bool UZipFileFunctionLibrary::UnzipTo(const FString& archivePath, const FString& destinationPath, UObject* ZipUtilityInterfaceDelegate, TEnumAsByte<ZipUtilityCompressionFormat> format)
 {
-	UnzipOnBGThreadWithFormat(archivePath, destinationPath, ZipUtilityInterfaceDelegate, COMPRESSION_FORMAT_UNKNOWN);
+	UnzipSynchronousWithFormat(archivePath, destinationPath, ZipUtilityInterfaceDelegate, COMPRESSION_FORMAT_UNKNOWN);
 	return true;
 }
 
@@ -483,7 +416,7 @@ bool UZipFileFunctionLibrary::Zip(const FString& path, UObject* progressDelegate
 	if (!isValidDirectory(directory, fileName, path))
 		return false;
 
-	ZipOnBGThread(path, fileName, directory, progressDelegate, Format, Level);
+	ZipSynchronous(path, fileName, directory, progressDelegate, Format, Level);
 	return true;
 }
 
@@ -509,6 +442,6 @@ bool UZipFileFunctionLibrary::ListFilesInArchive(const FString& path, UObject* l
 	if (!isValidDirectory(directory, fileName, path))
 		return false;
 
-	ListOnBGThread(path, directory, listDelegate, format);
+	ListSynchronous(path, directory, listDelegate, format);	
 	return true;
 }
